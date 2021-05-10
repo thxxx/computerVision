@@ -1,0 +1,12 @@
+{
+    "python.pythonPath": "/Users/gimhojin/opt/anaconda3/bin/python",
+    "files.associations": {
+        "string.h": "c",
+        "array": "c",
+        "iterator": "c",
+        "string": "c",
+        "string_view": "c",
+        "vector": "c",
+        "time.h": "c"
+    }
+}
