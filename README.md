@@ -42,9 +42,11 @@ train dataset을 이용해서 Principle Components Analysis 실행.
 __Step 1__
 1. Using __SVD algorithm__, compute principal components of the‘train’ dataset.
 2. Given a percentage of the variance as an input, select the number of principal components you use for this data.
+
 __Step 2__
 1. Save the reconstructed image
 2. Output the reconstruction loss of each train image
+
 __Step 3__
 1. Recognize images in the test dataset using a simple nearest neighbor algorithm. We’ll use 'l2 distance’. (Compute distance between two vectors.)
 l2 distance(Euclidean distance)
