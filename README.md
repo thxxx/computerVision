@@ -10,6 +10,7 @@ By using convolution with various filters, we can reduce noise contained in imag
 1. Average filter
 2. Median filter
 3. Bilateral filter
+
 [Bilateral fiflet란?]: https://redstarhong.tistory.com/57
 
 Goal : RMS error (Root Mean Square) boundary 안에 들기
