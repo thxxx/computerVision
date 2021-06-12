@@ -16,6 +16,7 @@
 #define ASSUME 30
 
 int TimeQuantum = 10;
+int TimeInterval = 8;
 int pagefault = 0;
 
 struct Process
@@ -23,15 +24,16 @@ struct Process
     int pid;
     char *program; // char program[30] 했을 땐 안됐음.
     int pages[ASSUME];
-    int pages_num;
+    int pages_num; // 생성한 페이지 개수
     int priority;
     int PC;
     int aid[ASSUME];
     int startCycle;
     int sleep_rest;
     int remain_time_quantum;
-    int valid[ASSUME];
-    // int reference[ASSUME];
+    int valid[ASSUME];     // index는 page Id
+    int reference[ASSUME]; // index는 page Id
+    int refByte[ASSUME];
 } Process;
 
 struct IOjobs
@@ -220,12 +222,37 @@ int main(int argc, char *argv[])
         0,
     };
 
+    int clockStart = 0;
+
     while (jobs != 0)
     {
-        // 한 사이클이 시작되고나서 작업들의 우선순위
-        // 1
+
+        int is_end = 0;
+        int outpid = -1;
+
+        if (strcmp(replace_algorithm, "sampled") == 0)
+        {
+            if (cycle % 8 == 0)
+            {
+                for (int s = 0; s < total_pid_num; s++)
+                {
+                    if (total_run_pros[s].pid > -1)
+                    {
+                        for (int p = 0; p < total_run_pros[s].pages_num; p++)
+                        {
+                            total_run_pros[s].refByte[p] = (int)(total_run_pros[s].refByte[p] / 2) + 128 * total_run_pros[s].reference[p];
+                            total_run_pros[s].reference[p] = 0;
+                            now_running.reference[p] = 0;
+                        }
+                    }
+                }
+                // reference bit이
+            }
+        }
+
+        // 1. 한 사이클이 시작되고나서 작업들의 우선순위
         // 1. Sleep 된 프로세스의 종료 여부 검사 -> 종료 시 Run queue 맨 뒤 삽입
-        // 1
+        // 1.
         for (int s = 0; s < total_pid_num; s++)
         {
             if (sleep_list[s].pid > -1 && sleep_list[s].pid <= total_pid_num)
@@ -295,9 +322,9 @@ int main(int argc, char *argv[])
                 now_all_number_of_processes += 1;
             }
         }
+        // 4. 런 큐 안에서 제일 우선순위 높은거 결정 -> 현재 돌고 있는거랑 비교
         // 4. 이번 사이클에 실행될 Process 결정
-        // 런 큐 안에서 제일 우선순위 높은거 결정 -> 현재 돌고 있는거랑 비교
-        // 원래 프로세스가 뺏길 시 그때의 PC를 저장해둬야함.
+        // 4. 원래 프로세스가 뺏길 시 그때의 PC를 저장해둬야함.
         int priority = 10;
         for (int r = 0; r < 10; r++)
         {
@@ -419,24 +446,24 @@ int main(int argc, char *argv[])
                 now_running.pages[now_running.pages_num] = required_pages;
                 now_running.valid[now_running.pages_num] = 0;
                 now_running.aid[now_running.pages_num] = -1;
-                // now_running.reference[now_running.pages_num] = -1;
+                now_running.reference[now_running.pages_num] = 0;
                 now_running.pages_num++;
             }
             else if (atoi(tokens[now_running.PC * 2 + 1]) == 1)
             {
                 // page ID로 접근을 요청한다. process구분없이 전체에 대하여 고유한 AID를 부여받고, valid는 1이된다.
                 int accesspid = atoi(tokens[now_running.PC * 2 + 2]);
+                now_running.reference[accesspid] = 1;
                 fprintf(out, "[%d Cycle] Input: Pid[%d] Function[%s] Page ID[%d] Page Num[%d]\n", cycle, now_running.pid, "ACCESS", accesspid, now_running.pages[accesspid]);
                 // 새로운 Allocation ID 할당.
                 if (now_running.aid[accesspid] <= -1)
                 {
+                    //access 요청한 page id
+
                     pagefault += 1;
 
                     now_running.aid[accesspid] = AllocationID;
-                    for (int i = 0; i < now_running.pages_num; i++)
-                    {
-                        now_running.valid[i] = 0;
-                    }
+
                     now_running.valid[accesspid] = 1;
                     AllocationID += 1;
 
@@ -444,25 +471,47 @@ int main(int argc, char *argv[])
                     {
                         if (pow(2, r - 1) < now_running.pages[accesspid] && now_running.pages[accesspid] < pow(2, r))
                         {
+                            int removeAid = -1;
                             while (physical.capacity - physical.now_allocated - pow(2, r) < 0)
                             {
                                 // 페이지 교체 알고리즘을 실행해야함.
                                 if (strcmp(replace_algorithm, "lru") == 0)
                                 {
                                     // 가장 예전에 사용된 프레임을 골라서 해제한다.
+                                    // 해제할 프레임의 Allocation ID를 선정하는게 목적
                                     int lruframe = 300; // 그냥 작은수로 잡은 것
-                                    int removeAid = -1;
-                                    for (int c = 0; c < ASSUME; c++)
+                                    for (int aid = 0; aid < ASSUME; aid++)
                                     {
-                                        if (physical.isAllocatedNow[c] > 0)
+                                        if (physical.isAllocatedNow[aid] > 0)
                                         {
-                                            if (0 < physical.cycle_accessed[c] && physical.cycle_accessed[c] < lruframe)
+                                            if (0 < physical.cycle_accessed[aid] && physical.cycle_accessed[aid] < lruframe)
                                             {
-                                                removeAid = c;
+                                                removeAid = aid;
+                                                lruframe = physical.cycle_accessed[aid];
                                             }
                                         }
                                     }
-                                    // removeAid를 메모리 해제한다.
+
+                                    // removeAid에 해당하는 allocation ID를 가진 페이지를 물리메모리에서 해제한다.
+                                    // 아래는 removeAid에 해당하는 page의 valid bit을 0으로 바꾸는 코드 해제해제해제
+                                    for (int proid = 0; proid < total_pid_num; proid++)
+                                    {
+                                        for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                        {
+                                            // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                            if (removeAid == total_run_pros[proid].aid[pgnum])
+                                            {
+                                                total_run_pros[proid].valid[pgnum] = 0;
+                                                total_run_pros[proid].reference[pgnum] = 0;
+                                                if (now_running.pid == total_run_pros[proid].pid)
+                                                {
+                                                    now_running.valid[pgnum] = 0;
+                                                    now_running.reference[pgnum] = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
                                     {
                                         physical.bits[c] = -1;
@@ -470,23 +519,50 @@ int main(int argc, char *argv[])
                                     physical.isAllocatedNow[removeAid] = 0;
                                     physical.now_allocated -= physical.lengthOfAid[removeAid];
                                     // 함수로 따로 빼기 정리할 시간이 있다면..
+                                    // 해제 끝
                                 }
                                 else if (strcmp(replace_algorithm, "sampled") == 0)
                                 {
                                     // 가장 예전에 사용된 프레임을 골라서 해제한다.
-                                    int lruframe = 300; // 그냥 작은수로 잡은 것
-                                    int removeAid = -1;
-                                    for (int c = 0; c < ASSUME; c++)
+                                    // 해제할 프레임의 Allocation ID를 선정하는게 목적
+                                    int smallestref = 300; // 그냥 작은수로 잡은 것
+                                    for (int aid = 0; aid < ASSUME; aid++)
                                     {
-                                        if (physical.isAllocatedNow[c] > 0)
+                                        if (physical.isAllocatedNow[aid] > 0)
                                         {
-                                            if (0 < physical.cycle_accessed[c] && physical.cycle_accessed[c] < lruframe)
+                                            for (int proid = 0; proid < total_pid_num; proid++)
                                             {
-                                                removeAid = c;
+                                                for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                                {
+                                                    // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                                    if (total_run_pros[proid].refByte[pgnum] < smallestref && 0 < total_run_pros[proid].refByte[pgnum])
+                                                    {
+                                                        removeAid = aid;
+                                                        smallestref = total_run_pros[proid].refByte[pgnum];
+                                                    }
+                                                }
                                             }
                                         }
                                     }
-                                    // removeAid를 메모리 해제한다.
+
+                                    // removeAid에 해당하는 allocation ID를 가진 페이지를 물리메모리에서 해제한다.
+                                    // 아래는 removeAid에 해당하는 page의 valid bit을 0으로 바꾸는 코드 해제해제해제
+                                    for (int proid = 0; proid < total_pid_num; proid++)
+                                    {
+                                        for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                        {
+                                            // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                            if (removeAid == total_run_pros[proid].aid[pgnum])
+                                            {
+                                                total_run_pros[proid].valid[pgnum] = 0;
+                                                if (now_running.pid == total_run_pros[proid].pid)
+                                                {
+                                                    now_running.valid[pgnum] = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
                                     {
                                         physical.bits[c] = -1;
@@ -494,23 +570,291 @@ int main(int argc, char *argv[])
                                     physical.isAllocatedNow[removeAid] = 0;
                                     physical.now_allocated -= physical.lengthOfAid[removeAid];
                                     // 함수로 따로 빼기 정리할 시간이 있다면..
+                                    // 해제 끝
+                                }
+                                else if (strcmp(replace_algorithm, "clock") == 0)
+                                {
+                                    int chosen = 0;
+                                    int allocs[ASSUME];
+                                    int count = 0;
+                                    while (chosen != 1)
+                                    {
+                                        for (int c = clockStart; c < ASSUME; c++)
+                                        {
+                                            if (physical.isAllocatedNow[c] == 1)
+                                            {
+                                                if (c > clockStart)
+                                                {
+                                                    for (int proid = 0; proid < total_pid_num; proid++)
+                                                    {
+                                                        for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                                        {
+                                                            // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                                            if (c == total_run_pros[proid].aid[pgnum])
+                                                            {
+                                                                if (total_run_pros[proid].reference[pgnum] == 0)
+                                                                {
+                                                                    removeAid = c;
+                                                                    clockStart = c;
+                                                                    chosen = 1;
+                                                                    break;
+                                                                }
+                                                                else
+                                                                {
+                                                                    total_run_pros[proid].reference[pgnum] = 0;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if (chosen != 1)
+                                        {
+                                            for (int c = 0; c < clockStart; c++)
+                                            {
+                                                if (physical.isAllocatedNow[c] == 1)
+                                                {
+                                                    for (int proid = 0; proid < total_pid_num; proid++)
+                                                    {
+                                                        for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                                        {
+                                                            // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                                            if (c == total_run_pros[proid].aid[pgnum])
+                                                            {
+                                                                if (total_run_pros[proid].reference[pgnum] == 0)
+                                                                {
+                                                                    removeAid = c;
+                                                                    chosen = 1;
+                                                                    clockStart = c;
+                                                                    break;
+                                                                }
+                                                                else
+                                                                {
+                                                                    total_run_pros[proid].reference[pgnum] = 0;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // removeAid에 해당하는 allocation ID를 가진 페이지를 물리메모리에서 해제한다.
+                                    // 아래는 removeAid에 해당하는 page의 valid bit을 0으로 바꾸는 코드 해제해제해제
+                                    for (int proid = 0; proid < total_pid_num; proid++)
+                                    {
+                                        for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                        {
+                                            // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                            if (removeAid == total_run_pros[proid].aid[pgnum])
+                                            {
+                                                total_run_pros[proid].valid[pgnum] = 0;
+                                                if (now_running.pid == total_run_pros[proid].pid)
+                                                {
+                                                    now_running.valid[pgnum] = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
+                                    {
+                                        physical.bits[c] = -1;
+                                    }
+                                    physical.isAllocatedNow[removeAid] = 0;
+                                    physical.now_allocated -= physical.lengthOfAid[removeAid];
+                                    // 함수로 따로 빼기 정리할 시간이 있다면..
+                                    // 해제 끝
+                                }
+                                else
+                                {
+                                    printf("What do you want? \n");
+                                    break;
+                                }
+                            }
+                            int startIndex = 0;
+                            for (int ste; ste < PMsize / (page_frame_size); ste++)
+                            {
+                                if (physical.bits[ste] == removeAid)
+                                {
+                                    startIndex = ste;
+                                }
+                            }
+                            if (removeAid > -1)
+                            {
+                                for (int al = startIndex; al < startIndex + pow(2, r); al++)
+                                {
+                                    physical.bits[al] = now_running.aid[accesspid];
+                                }
+                            }
+                            else
+                            {
+                                for (int al = physical.now_allocated; al < physical.now_allocated + pow(2, r); al++)
+                                {
+                                    physical.bits[al] = now_running.aid[accesspid];
+                                }
+                            }
+                            physical.startIndexOfAid[now_running.aid[accesspid]] = startIndex;
+                            physical.now_allocated += pow(2, r);
+
+                            physical.cycle_accessed[now_running.aid[accesspid]] = cycle;
+                            physical.isAllocatedNow[now_running.aid[accesspid]] = 1;
+                            physical.lengthOfAid[now_running.aid[accesspid]] = pow(2, r);
+                            break;
+                        }
+                    }
+                }
+                else if (physical.isAllocatedNow[now_running.aid[accesspid]] <= 0)
+                {
+                    // allocation id를 부여받은 상탠데 현재 할당되어있지는 않다?
+                    fprintf(out, "allocation id를 부여받은 상탠데 현재 할당되어있지는 않다? \n");
+                    fprintf(out, "allocation ID : %d \n", now_running.aid[accesspid]);
+                    pagefault += 1;
+
+                    now_running.valid[accesspid] = 1;
+
+                    for (int r = 1; r < 9; r++)
+                    {
+                        if (pow(2, r - 1) < now_running.pages[accesspid] && now_running.pages[accesspid] < pow(2, r))
+                        {
+                            int removeAid = -1;
+                            while (physical.capacity - physical.now_allocated - pow(2, r) < 0)
+                            {
+                                // 페이지 교체 알고리즘을 실행해야함.
+                                if (strcmp(replace_algorithm, "lru") == 0)
+                                {
+                                    // 가장 예전에 사용된 프레임을 골라서 해제한다.
+                                    // 해제할 프레임의 Allocation ID를 선정하는게 목적
+                                    int lruframe = 300; // 그냥 작은수로 잡은 것
+                                    for (int aid = 0; aid < ASSUME; aid++)
+                                    {
+                                        if (physical.isAllocatedNow[aid] > 0)
+                                        {
+                                            if (0 < physical.cycle_accessed[aid] && physical.cycle_accessed[aid] < lruframe)
+                                            {
+                                                removeAid = aid;
+                                                lruframe = physical.cycle_accessed[aid];
+                                            }
+                                        }
+                                    }
+
+                                    // removeAid에 해당하는 allocation ID를 가진 페이지를 물리메모리에서 해제한다.
+                                    // 아래는 removeAid에 해당하는 page의 valid bit을 0으로 바꾸는 코드 해제해제해제
+                                    for (int proid = 0; proid < total_pid_num; proid++)
+                                    {
+                                        for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                        {
+                                            // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                            if (removeAid == total_run_pros[proid].aid[pgnum])
+                                            {
+                                                total_run_pros[proid].valid[pgnum] = 0;
+                                                total_run_pros[proid].reference[pgnum] = 0;
+                                                if (now_running.pid == total_run_pros[proid].pid)
+                                                {
+                                                    now_running.valid[pgnum] = 0;
+                                                    now_running.reference[pgnum] = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
+                                    {
+                                        physical.bits[c] = -1;
+                                    }
+                                    physical.isAllocatedNow[removeAid] = 0;
+                                    physical.now_allocated -= physical.lengthOfAid[removeAid];
+                                    // 함수로 따로 빼기 정리할 시간이 있다면..
+                                    // 해제 끝
+                                }
+                                else if (strcmp(replace_algorithm, "sampled") == 0)
+                                {
+                                    // 가장 예전에 사용된 프레임을 골라서 해제한다.
+                                    // 해제할 프레임의 Allocation ID를 선정하는게 목적
+                                    int smallestref = 300; // 그냥 작은수로 잡은 것
+                                    for (int aid = 0; aid < ASSUME; aid++)
+                                    {
+                                        if (physical.isAllocatedNow[aid] > 0)
+                                        {
+                                            for (int proid = 0; proid < total_pid_num; proid++)
+                                            {
+                                                for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                                {
+                                                    // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                                    if (total_run_pros[proid].refByte[pgnum] < smallestref && 0 < total_run_pros[proid].refByte[pgnum])
+                                                    {
+                                                        removeAid = aid;
+                                                        smallestref = total_run_pros[proid].refByte[pgnum];
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // removeAid에 해당하는 allocation ID를 가진 페이지를 물리메모리에서 해제한다.
+                                    // 아래는 removeAid에 해당하는 page의 valid bit을 0으로 바꾸는 코드 해제해제해제
+                                    for (int proid = 0; proid < total_pid_num; proid++)
+                                    {
+                                        for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                        {
+                                            // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                            if (removeAid == total_run_pros[proid].aid[pgnum])
+                                            {
+                                                total_run_pros[proid].valid[pgnum] = 0;
+                                                if (now_running.pid == total_run_pros[proid].pid)
+                                                {
+                                                    now_running.valid[pgnum] = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
+                                    {
+                                        physical.bits[c] = -1;
+                                    }
+                                    physical.isAllocatedNow[removeAid] = 0;
+                                    physical.now_allocated -= physical.lengthOfAid[removeAid];
+                                    // 함수로 따로 빼기 정리할 시간이 있다면..
+                                    // 해제 끝
                                 }
                                 else if (strcmp(replace_algorithm, "clock") == 0)
                                 {
                                     // 가장 예전에 사용된 프레임을 골라서 해제한다.
+                                    // 해제할 프레임의 Allocation ID를 선정하는게 목적
                                     int lruframe = 300; // 그냥 작은수로 잡은 것
-                                    int removeAid = -1;
-                                    for (int c = 0; c < ASSUME; c++)
+                                    for (int aid = 0; aid < ASSUME; aid++)
                                     {
-                                        if (physical.isAllocatedNow[c] > 0)
+                                        if (physical.isAllocatedNow[aid] > 0)
                                         {
-                                            if (0 < physical.cycle_accessed[c] && physical.cycle_accessed[c] < lruframe)
+                                            if (0 < physical.cycle_accessed[aid] && physical.cycle_accessed[aid] < lruframe)
                                             {
-                                                removeAid = c;
+                                                removeAid = aid;
+                                                lruframe = physical.cycle_accessed[aid];
                                             }
                                         }
                                     }
-                                    // removeAid를 메모리 해제한다.
+
+                                    // removeAid에 해당하는 allocation ID를 가진 페이지를 물리메모리에서 해제한다.
+                                    // 아래는 removeAid에 해당하는 page의 valid bit을 0으로 바꾸는 코드 해제해제해제
+                                    for (int proid = 0; proid < total_pid_num; proid++)
+                                    {
+                                        for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                                        {
+                                            // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                                            if (removeAid == total_run_pros[proid].aid[pgnum])
+                                            {
+                                                total_run_pros[proid].valid[pgnum] = 0;
+                                                if (now_running.pid == total_run_pros[proid].pid)
+                                                {
+                                                    now_running.valid[pgnum] = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
                                     {
                                         physical.bits[c] = -1;
@@ -518,6 +862,7 @@ int main(int argc, char *argv[])
                                     physical.isAllocatedNow[removeAid] = 0;
                                     physical.now_allocated -= physical.lengthOfAid[removeAid];
                                     // 함수로 따로 빼기 정리할 시간이 있다면..
+                                    // 해제 끝
                                 }
                                 else
                                 {
@@ -539,18 +884,42 @@ int main(int argc, char *argv[])
                             break;
                         }
                     }
-                }
-                else if (physical.isAllocatedNow[now_running.aid[accesspid]] <= 0)
-                {
-                    pagefault += 1;
+                    total_run_pros[now_running.pid] = now_running;
                 }
             }
             else if (atoi(tokens[now_running.PC * 2 + 1]) == 2)
             {
-                fprintf(out, "[%d Cycle] Input: Pid[%d] Function[%s] Page ID[%d] Page Num[%d]\n", cycle, now_running.pid, "RELEASE", 1, 1);
+                // memory 해제 작업
                 int releasepid = atoi(tokens[now_running.PC * 2 + 2]);
                 int removeAid = now_running.aid[releasepid];
-                // removeAid를 메모리 해제한다.
+                fprintf(out, "[%d Cycle] Input: Pid[%d] Function[%s] Page ID[%d] Page Num[%d]\n", cycle, now_running.pid, "RELEASE", releasepid, now_running.pages[releasepid]);
+
+                fprintf(out, "Release Aid : %d\n", removeAid);
+
+                // removeAid에 해당하는 allocation ID를 가진 페이지를 물리메모리에서 해제한다.
+                // 아래는 removeAid에 해당하는 page의 valid bit을 0으로 바꾸는 코드 해제해제해제
+                for (int proid = 0; proid < total_pid_num; proid++)
+                {
+                    for (int pgnum = 0; pgnum < total_run_pros[proid].pages_num; pgnum++)
+                    {
+                        // total_run_pros[t].aid[pgnum] 는 allocationID이다.
+                        if (removeAid == total_run_pros[proid].aid[pgnum])
+                        {
+                            total_run_pros[proid].valid[pgnum] = 0;
+                            if (now_running.pid == total_run_pros[proid].pid)
+                            {
+                                now_running.valid[pgnum] = 0;
+                            }
+                        }
+                    }
+                }
+
+                total_run_pros[now_running.pid].valid[releasepid] = -1;
+                total_run_pros[now_running.pid].aid[releasepid] = -1;
+
+                now_running.valid[releasepid] = -1;
+                now_running.aid[releasepid] = -1;
+
                 for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
                 {
                     physical.bits[c] = -1;
@@ -558,13 +927,16 @@ int main(int argc, char *argv[])
                 physical.isAllocatedNow[removeAid] = 0;
                 physical.now_allocated -= physical.lengthOfAid[removeAid];
                 // 함수로 따로 빼기 정리할 시간이 있다면..
+                // 해제 끝
             }
             else if (atoi(tokens[now_running.PC * 2 + 1]) == 3)
             {
+                // Non - memory 작업
                 fprintf(out, "[%d Cycle] Input: Pid[%d] Function[%s]\n", cycle, now_running.pid, "NON-MEMORY");
             }
             else if (atoi(tokens[now_running.PC * 2 + 1]) == 4)
             {
+                // Sleep 작업
                 fprintf(out, "[%d Cycle] Input: Pid[%d] Function[%s]\n", cycle, now_running.pid, "SLEEP");
                 now_running.sleep_rest = atoi(tokens[now_running.PC * 2 + 2]);
                 now_running.PC = now_running.PC + 1;
@@ -586,32 +958,20 @@ int main(int argc, char *argv[])
             {
                 now_running.PC = now_running.PC + 1;
             }
+            // 해당 프로세스는 모든 명령을 완료하였다. physical memory에서 해당 프로세스에게 할당되어 있는 프레임들도 해제되어야한다.
+            // PC가 끝에 도달하면 끝난다.
             if (now_running.PC == atoi(tokens[0]))
             {
+                is_end = 1;
+                outpid = now_running.pid;
                 now_all_number_of_processes -= 1;
-                total_run_pros[now_running.pid].pid = -1;
                 now_running.pid = -1;
-                // 해당 프로세스는 모든 명령을 완료하였다. physical memory에서 해당 프로세스에게 할당되어 있는 프레임들도 해제되어야한다.
-                for (int ai = 0; ai < ASSUME; ai++)
-                {
-                    if (physical.isAllocatedNow[ai] == 1)
-                    {
-                        int removeAid = ai;
-
-                        for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
-                        {
-                            physical.bits[c] = -1;
-                        }
-                        physical.isAllocatedNow[removeAid] = 0;
-                        physical.now_allocated -= physical.lengthOfAid[removeAid];
-                    }
-                }
-                //
             }
         }
         else
         {
             fprintf(sc, "Running Process: None \n");
+            fprintf(out, "[%d Cycle] Input: Function[%s]\n", cycle, "NO-OP");
         }
         if (now_running.pid != -1)
         {
@@ -658,6 +1018,10 @@ int main(int argc, char *argv[])
                     {
                         if (check < vm && vm <= total_run_pros[i].pages[p] + check)
                         {
+                            if (total_run_pros[i].valid[p] < 0)
+                            {
+                                break;
+                            }
                             fprintf(out, "%d", p);
                             draw = 1;
                             break;
@@ -705,6 +1069,7 @@ int main(int argc, char *argv[])
                     }
                 }
                 fprintf(out, "|\n");
+
                 //
                 // valid bit을 출력하는 부분
                 //
@@ -721,6 +1086,10 @@ int main(int argc, char *argv[])
                     {
                         if (check < vm && vm <= total_run_pros[i].pages[p] + check)
                         {
+                            if (total_run_pros[i].valid[p] < 0)
+                            {
+                                break;
+                            }
                             fprintf(out, "%d", total_run_pros[i].valid[p]);
                             draw = 1;
                             break;
@@ -733,6 +1102,7 @@ int main(int argc, char *argv[])
                     }
                 }
                 fprintf(out, "|\n");
+
                 //
                 fprintf(out, ">> pid(%d)%-20s", total_run_pros[i].pid, " Page Table(Ref): ");
                 for (int vm = 0; vm < vm_nums; vm++)
@@ -741,7 +1111,36 @@ int main(int argc, char *argv[])
                     {
                         fprintf(out, "|");
                     }
-                    fprintf(out, "-");
+                    if (strcmp(replace_algorithm, "lru") != 0)
+                    {
+                        int check = -1;
+                        int draw = 0;
+                        for (int p = 0; p < total_run_pros[i].pages_num; p++)
+                        {
+                            if (check < vm && vm <= total_run_pros[i].pages[p] + check)
+                            {
+                                if (total_run_pros[i].valid[p] < 0)
+                                {
+                                    break;
+                                }
+                                if (-1 < total_run_pros[i].reference[p] && total_run_pros[i].reference[p] < 2)
+                                {
+                                    fprintf(out, "%d", total_run_pros[i].reference[p]);
+                                    draw = 1;
+                                    break;
+                                }
+                            }
+                            check += total_run_pros[i].pages[p];
+                        }
+                        if (draw == 0)
+                        {
+                            fprintf(out, "-");
+                        }
+                    }
+                    else
+                    {
+                        fprintf(out, "-");
+                    }
                 }
                 fprintf(out, "|\n");
             }
@@ -824,7 +1223,24 @@ int main(int argc, char *argv[])
         }
         fprintf(sc, "\n");
         fprintf(sc, "\n");
+        if (is_end == 1)
+        {
+            total_run_pros[outpid].pid = -1;
+            for (int ai = 0; ai < ASSUME; ai++)
+            {
+                if (physical.isAllocatedNow[ai] == 1)
+                {
+                    int removeAid = ai;
 
+                    for (int c = physical.startIndexOfAid[removeAid]; c < physical.startIndexOfAid[removeAid] + physical.lengthOfAid[removeAid]; c++)
+                    {
+                        physical.bits[c] = -1;
+                    }
+                    physical.isAllocatedNow[removeAid] = 0;
+                    physical.now_allocated -= physical.lengthOfAid[removeAid];
+                }
+            }
+        }
         if (now_all_number_of_processes <= 0)
         {
             jobs = 0;
@@ -835,3 +1251,5 @@ int main(int argc, char *argv[])
     fprintf(out, "page fault : %d \n", pagefault);
     return 0;
 }
+
+// void release_memory(int alloid, )
