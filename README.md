@@ -56,4 +56,6 @@ l2 distance(Euclidean distance)
 pytorch와 Google Colab을 써서 간단한 Back Propagation 실행.
 구성 - forward pass, backworad pass, weight update
 
+## Project3
 
+### Lenet-5 구현 및 학습률 최적화
